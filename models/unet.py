@@ -2,7 +2,8 @@ import tensorflow as tf
 import tensorflow.contrib.slim as slim
 from utils import summaries
 import logging
-
+import sys
+logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format='[%(asctime)s] [%(levelname)s]: %(message)s')
 
 class UNet(object):
 
@@ -14,7 +15,7 @@ class UNet(object):
                  normalization_params=None,
                  dropout_keep_prob=1.0,
                  weights_decay=0.00004,
-                 is_training=False):
+                 is_training=False, *args, **kwargs):
         self.input_tensor = input_tensor
         self.layers_number = downsample_number
         self.start_filter_num = start_filter_num
@@ -29,9 +30,15 @@ class UNet(object):
 
         with tf.variable_scope("contractive"):
             self.contracted_output = slim.dropout(self._contractive_part(), keep_prob=self.dropout_keep_prob)
+            logging.debug("Tensor affter contractive part is: {}".format(self.contracted_output))
+
+        with tf.variable_scope("dilation"):
+            # TODO
+            pass
 
         with tf.variable_scope("expansive"):
             self.expansive_output = self._expansive_part()
+            logging.debug("Tensor affter expansive part is: {}".format(self.expansive_output))
 
         with tf.variable_scope("logits"):
             self.logits = slim.conv2d(inputs=self.expansive_output,
@@ -39,7 +46,7 @@ class UNet(object):
                                       kernel_size=[1, 1],
                                       activation_fn=None,
                                       weights_regularizer=slim.l2_regularizer(self.weights_decay))
-
+            logging.debug("Tensor of logits: {}".format(self.logits))
             summaries.variable_summaries(self.logits, 'summary', 'logits')
 
     def _contractive_block(self, layer_input, filters_number, padding='SAME'):
@@ -96,9 +103,11 @@ class UNet(object):
                 filter_nums *= 2
                 current_output = pooled
                 self.layers.append(conv_output)
+                logging.debug("Output of contractive layer {} is {}".format(layer_i, current_output))
 
         with tf.variable_scope("downsample_final"):
             conv_output = self._contractive_block(current_output, filter_nums)
+            logging.debug("Output of final contractive layer is {}".format(conv_output))
         self.layers.append(conv_output)
 
         return conv_output
@@ -111,5 +120,36 @@ class UNet(object):
                 output = self._expansive_block(current_outuput, self.layers[layer_i], filter_nums)
                 filter_nums = int(filter_nums/2)
                 current_outuput = output
+                logging.debug("Output of expansive layer {} is {}".format(layer_i, current_outuput))
 
         return current_outuput
+
+
+if __name__ == '__main__':
+    input_tensor = tf.placeholder(tf.float32, [None, 256, 256, 3])
+    is_training = True
+    unet = UNet(input_tensor=input_tensor,
+                downsample_number=6,
+                start_filter_num=16,
+                activation_fn=tf.nn.relu,
+                normalization=slim.batch_norm,
+                normalization_params={
+                    'fused': None,
+                    'is_training': is_training,
+                    'updates_collections': tf.GraphKeys.UPDATE_OPS,
+                    'decay': 0.96,
+                    'epsilon': 0.001
+                },
+                dropout_keep_prob=0.75,
+                weights_decay=0.0004,
+                is_training=is_training)
+
+    logging.info("Logits: {}".format(unet.logits))
+
+    logging.debug("Summaries")
+    for summary in tf.get_collection(tf.GraphKeys.SUMMARIES):
+        logging.debug(summary)
+
+    logging.debug("Trainable variables")
+    for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES):
+        logging.debug(var)
