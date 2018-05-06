@@ -1,8 +1,11 @@
-import tensorflow as tf
-import tensorflow.contrib.slim as slim
-from utils import summaries
 import logging
 import sys
+
+import tensorflow as tf
+import tensorflow.contrib.slim as slim
+
+from fullnet_alchemist.utils import summaries
+
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format='[%(asctime)s] [%(levelname)s]: %(message)s')
 
 class UNet(object):
