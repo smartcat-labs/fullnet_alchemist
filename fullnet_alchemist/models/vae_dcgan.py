@@ -1,7 +1,9 @@
+import logging
+
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
-from utils.summaries import variable_summaries
-import logging
+
+from fullnet_alchemist.utils.summaries import variable_summaries
 
 
 class VariationalConvolutionalEncoder(object):
