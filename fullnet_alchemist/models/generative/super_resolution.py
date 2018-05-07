@@ -65,7 +65,7 @@ class SimpleGenerator(object):
                                       scope="tanh_conv2d_{}x{}".format(self.kernel[0], self.kernel[1]))
 
                 logging.debug("Output of upsampling generator is {}".format(outputs))
-                tf.summary.image("upsampled", outputs, 5)
+                tf.summary.image("upsampled", tf.div(tf.add(outputs, 1.0), 2.0), 5)
 
         self.reuse = True
         self.variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
