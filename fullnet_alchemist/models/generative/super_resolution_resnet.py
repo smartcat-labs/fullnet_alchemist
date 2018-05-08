@@ -5,6 +5,7 @@ import tensorflow.contrib.slim as slim
 
 from fullnet_alchemist.utils.summaries import variable_summaries
 
+# TODO: This implementation is invalid
 
 class SimpleGenerator(object):
 
@@ -65,7 +66,7 @@ class SimpleGenerator(object):
                                       scope="tanh_conv2d_{}x{}".format(self.kernel[0], self.kernel[1]))
 
                 logging.debug("Output of upsampling generator is {}".format(outputs))
-                tf.summary.image("upsampled", tf.div(tf.add(outputs, 1.0), 2.0), 5)
+                tf.summary.image("upsampled", outputs, 5)
 
         self.reuse = True
         self.variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
@@ -143,7 +144,7 @@ class SuperResolution(object):
         self.generator = generator
         self.discriminator = discriminator
 
-    def loss(self, lowres_input, highres_input):
+    def loss(self, lowres_input, highres_input, gama):
         enhanced = self.enhance(lowres_input, name='enhance', is_training=True)
 
         logits_lowres = self.discriminator.discriminate(enhanced, 'lowres_discriminator')
@@ -167,11 +168,17 @@ class SuperResolution(object):
         )
         variable_summaries(generator_loss, 'generator/summary', 'loss')
 
+        reconstruction_loss = tf.reduce_mean(tf.square(highres_input - enhanced))
+        variable_summaries(reconstruction_loss, 'reconstruction/summary', 'loss')
+
+        total_generator_loss = gama * reconstruction_loss + generator_loss
+        variable_summaries(total_generator_loss, 'generator_total/summary', 'loss')
+
         total_discriminator_loss = highres_discriminator_loss + lowres_discriminator_loss
 
         variable_summaries(total_discriminator_loss, 'discriminator_total/summary', 'loss')
 
-        return total_discriminator_loss, generator_loss
+        return total_discriminator_loss, total_generator_loss
 
     def train_op(self, discriminator_loss, generator_loss, learning_rate, beta1):
         discrimiator_optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate, beta1=beta1)
