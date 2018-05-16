@@ -2,6 +2,7 @@ import logging
 
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
+from tensorflow.contrib.slim import nets
 
 from fullnet_alchemist.utils.summaries import variable_summaries
 
@@ -212,7 +213,7 @@ class SuperResolution(object):
     def __init__(self, generator, discriminator, feature_extractor=None):
         self.generator = generator
         self.discriminator = discriminator
-        self.feature_extractor = None
+        self.feature_extractor = feature_extractor
 
     def loss(self, lowres_input, highres_input, gama):
         enhanced = self.enhance(lowres_input, name='enhance', is_training=True)
@@ -221,40 +222,34 @@ class SuperResolution(object):
         logits_highres, highres_features = self.discriminator.discriminate(highres_input, 'highres_discriminator')
 
         if self.feature_extractor:
-            lowres_features = self.feature_extractor.extract(enhanced)
-            highres_features = self.feature_extractor.extract(highres_input)
+            lowres_features = self.feature_extractor.extract(enhanced, "lowres", 4)
+            highres_features = self.feature_extractor.extract(highres_input, "highres", 4)
 
-        lowres_features = 0.006 * lowres_features
-        highres_features = 0.006 * highres_features
-
-        highres_discriminator_loss = tf.reduce_mean(
-            tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_highres,
+        highres_discriminator_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_highres,
                                                     labels=tf.ones_like(logits_highres, dtype=tf.float32))
-        )
+
         variable_summaries(highres_discriminator_loss, 'discriminator_train/summary', 'loss')
 
-        lowres_discriminator_loss = tf.reduce_mean(
-            tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_lowres,
+        lowres_discriminator_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_lowres,
                                                     labels=tf.zeros_like(logits_lowres, dtype=tf.float32))
-        )
+
         variable_summaries(lowres_discriminator_loss, 'discriminator_generated/summary', 'loss')
 
-        content_loss = tf.reduce_mean(tf.square(highres_features - lowres_features), name="content_loss")
+        content_loss = tf.reduce_mean(tf.square(highres_features - lowres_features), 1, name="content_loss")
         variable_summaries(content_loss, "content_loss", "loss")
 
-        generator_loss = tf.reduce_mean(
-            tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_lowres,
+        generator_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=logits_lowres,
                                                     labels=tf.ones_like(logits_lowres, dtype=tf.float32))
-        )
+
         variable_summaries(generator_loss, 'generator/summary', 'loss')
 
         reconstruction_loss = tf.reduce_mean(tf.square(highres_input - enhanced))
         variable_summaries(reconstruction_loss, 'reconstruction/summary', 'loss')
 
-        total_generator_loss = content_loss + gama*generator_loss
+        total_generator_loss = tf.reduce_mean(0.006 * content_loss + gama*generator_loss, name="total_generator_loss")
         variable_summaries(total_generator_loss, 'generator_total/summary', 'loss')
 
-        total_discriminator_loss = highres_discriminator_loss + lowres_discriminator_loss
+        total_discriminator_loss = tf.reduce_mean(highres_discriminator_loss + lowres_discriminator_loss, name="total_discriminator_loss")
 
         variable_summaries(total_discriminator_loss, 'discriminator_total/summary', 'loss')
 
@@ -276,6 +271,42 @@ class SuperResolution(object):
         return self.generator.generate(input_tensor, name, is_training)
 
 
+class FeatureExtractorVGG(object):
+
+    def __init__(self):
+        self.reuse = False
+        self.layers = list()
+        self.mean_const = tf.constant([123.68, 116.779, 103.939], name="vgg_mean")
+
+    def extract(self, input_tensor, name, layer_i):
+        input_tensor = tf.div(tf.add(input_tensor, 1.0), 2.0) * 255.0
+        input_tensor = input_tensor - self.mean_const
+        self.layers = list()
+        with tf.name_scope(name), tf.device("CPU:0"), tf.variable_scope("vgg_19", reuse=self.reuse):
+                # Collect outputs for conv2d, fully_connected and max_pool2d.
+                with slim.arg_scope([slim.conv2d, slim.fully_connected, slim.max_pool2d]):
+                    net = slim.repeat(input_tensor, 2, slim.conv2d, 64, [3, 3], scope='conv1')
+                    self.layers.append(net)
+                    net = slim.max_pool2d(net, [2, 2], scope='pool1')
+                    net = slim.repeat(net, 2, slim.conv2d, 128, [3, 3], scope='conv2')
+                    self.layers.append(net)
+                    net = slim.max_pool2d(net, [2, 2], scope='pool2')
+                    net = slim.repeat(net, 4, slim.conv2d, 256, [3, 3], scope='conv3')
+                    self.layers.append(net)
+                    net = slim.max_pool2d(net, [2, 2], scope='pool3')
+                    net = slim.repeat(net, 4, slim.conv2d, 512, [3, 3], scope='conv4')
+                    self.layers.append(net)
+                    net = slim.max_pool2d(net, [2, 2], scope='pool4')
+                    net = slim.repeat(net, 4, slim.conv2d, 512, [3, 3], scope='conv5')
+                    self.layers.append(net)
+                    net = slim.max_pool2d(net, [2, 2], scope='pool5')
+
+        self.reuse = True
+        self.variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, "vgg_19")
+
+        return slim.flatten(self.layers[layer_i])
+
+
 if __name__ == '__main__':
     import sys
     logging.basicConfig(stream=sys.stdout, level=logging.DEBUG, format='[%(asctime)s] [%(levelname)s]: %(message)s')
@@ -285,7 +316,9 @@ if __name__ == '__main__':
 
     generator = Generator(parametric_relu_fn())
     discriminator = Discriminator([64, 128, 256, 512], 3, tf.nn.leaky_relu)
-    superresolution = SuperResolution(generator, discriminator)
+
+    vgg = FeatureExtractorVGG()
+    superresolution = SuperResolution(generator, discriminator, vgg)
 
     discriminator_loss, generator_loss = superresolution.loss(lowres_placeholder, highres_placeholder, 1e-3)
 
@@ -293,3 +326,11 @@ if __name__ == '__main__':
     logging.debug(generator_loss)
 
     train_op = superresolution.train_op(discriminator_loss, generator_loss, 0.0002, 0.7)
+
+    sess = tf.Session()
+    sess.run(tf.global_variables_initializer())
+
+    saver = tf.train.Saver(vgg.variables)
+
+    saver.restore(sess, "/media/bigdisk/facelyzr_models/vgg_19.ckpt")
+    sess.close()
