@@ -273,16 +273,17 @@ class SuperResolution(object):
 
 class FeatureExtractorVGG(object):
 
-    def __init__(self):
+    def __init__(self, device="CPU:0"):
         self.reuse = False
         self.layers = list()
         self.mean_const = tf.constant([123.68, 116.779, 103.939], name="vgg_mean")
+        self.device = device
 
     def extract(self, input_tensor, name, layer_i):
         input_tensor = tf.div(tf.add(input_tensor, 1.0), 2.0) * 255.0
         input_tensor = input_tensor - self.mean_const
         self.layers = list()
-        with tf.name_scope(name), tf.device("CPU:0"), tf.variable_scope("vgg_19", reuse=self.reuse):
+        with tf.name_scope(name), tf.device(self.device), tf.variable_scope("vgg_19", reuse=self.reuse):
                 # Collect outputs for conv2d, fully_connected and max_pool2d.
                 with slim.arg_scope([slim.conv2d, slim.fully_connected, slim.max_pool2d]):
                     net = slim.repeat(input_tensor, 2, slim.conv2d, 64, [3, 3], scope='conv1')
@@ -326,11 +327,3 @@ if __name__ == '__main__':
     logging.debug(generator_loss)
 
     train_op = superresolution.train_op(discriminator_loss, generator_loss, 0.0002, 0.7)
-
-    sess = tf.Session()
-    sess.run(tf.global_variables_initializer())
-
-    saver = tf.train.Saver(vgg.variables)
-
-    saver.restore(sess, "/media/bigdisk/facelyzr_models/vgg_19.ckpt")
-    sess.close()
